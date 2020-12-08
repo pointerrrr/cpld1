@@ -7,10 +7,13 @@ import Debug.Trace
 
 type VEnv = E.Env Value
 
+data Flag = Evaluating | Returning
+
 data Value = I Integer
            | B Bool
            | Nil
            | Cons Integer Value
+           | Func Exp
            -- Add other variants as needed
            deriving (Show, Read)
 
@@ -23,8 +26,16 @@ instance PP.Pretty Value where
 
 
 
-data MachineState  -- add the definition
+data MachineState = MachineState [Frame] Exp Flag VEnv -- add the definition
 
+data Frame = FApp Block Block
+           | FIf Block Block Block
+           | FLet Block
+           | FValue
+
+data FBind = FBind Id Type [Id] Block
+
+data Block = Block | BValue Value | BExp Exp
 
 
 -- do not change this definition
@@ -44,16 +55,58 @@ evalE exp = loop (msInitialState exp)
                  newMsState = msStep ms
 
 msInitialState :: Exp -> MachineState
-msInitialState _ = error "implement me!"
+msInitialState exp = MachineState [] exp Evaluating E.empty
 
 -- checks whether machine is in final state
 msInFinalState :: MachineState -> Bool
-msInFinalState _ = error "implement me!"
+msInFinalState (MachineState [FValue] (Var s) Returning env) = True
+msInFinalState (MachineState [FValue] (Con s) Returning env) = True
+msInFinalState (MachineState [FValue] (Num x) Returning env) = True
+msInFinalState _                                             = False
 
 
 -- returns the final value, if machine in final state, Nothing otherwise
 msGetValue :: MachineState -> Value
-msGetValue _ = error "implement me!"
+msGetValue ms = case msInFinalState ms of True -> undefined
+                                          _    -> Nil
   
 msStep :: MachineState -> MachineState
-msStep _ = error "implement me!"
+msStep (MachineState stack exp Returning env) = error "implement me!"
+msStep (MachineState stack (Var s) Evaluating env) = undefined
+msStep (MachineState stack (Prim op) Evaluating env) = undefined
+msStep (MachineState stack (Con s) Evaluating env) = undefined
+msStep (MachineState stack (Num x) Evaluating env) = undefined
+msStep (MachineState stack (App e1 e2) Evaluating env) = (MachineState ((FApp Block Block):stack) e2 Evaluating env)
+msStep (MachineState stack (If e1 e2 e3) Evaluating env) = undefined
+msStep (MachineState stack (Let (b:bs) e) Evaluating env) = undefined
+msStep (MachineState stack (Recfun b) Evaluating env) = undefined
+msStep (MachineState stack (Letrec (b:bs) e) Evaluating env) = undefined
+
+insertValue :: Frame -> Value -> Frame
+insertValue (FApp Block block) = undefined
+insertValue (FApp block Block) = undefined
+insertValue (FIf Block block1 block2) = undefined
+insertValue (FIf (BValue (B bool)) block1 block2) = undefined
+
+insertValue (FLet Block) = undefined
+
+getNextExp :: [Frame] -> Exp
+getNextExp = undefined
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

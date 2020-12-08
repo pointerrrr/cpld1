@@ -28,8 +28,8 @@ instance PP.Pretty Value where
 
 data MachineState = MachineState [Frame] Exp Flag VEnv -- add the definition
 
-data Frame = FApp Block Block
-           | FIf Block Block Block
+data Frame = FApp Block Exp
+           | FIf Block Exp Exp
            | FLet Block
            | FValue
 
@@ -72,6 +72,8 @@ msGetValue ms = case msInFinalState ms of True -> undefined
   
 msStep :: MachineState -> MachineState
 msStep (MachineState stack exp Returning env) = error "implement me!"
+msStep (MachineState ((FIf Block e1 e2):xs) True Returning env) = undefined
+msStep (MachineState ((FIf Block e1 e2):xs) False Returning env) = undefined
 msStep (MachineState stack (Var s) Evaluating env) = undefined
 msStep (MachineState stack (Prim op) Evaluating env) = undefined
 msStep (MachineState stack (Con s) Evaluating env) = undefined
@@ -92,6 +94,7 @@ insertValue (FLet Block) = undefined
 
 getNextExp :: [Frame] -> Exp
 getNextExp = undefined
+
 
 
 

@@ -12,6 +12,8 @@ data Value = I Integer
            | Nil
            | Cons Integer Value
            | E Exp Value
+           | F Exp
+           | Unevaluated
            -- Add other variants as needed
            deriving (Show, Read)
 
@@ -26,12 +28,14 @@ instance PP.Pretty Value where
 
 data MachineState = MachineState Stack Exp VEnv Flag String -- add the definition
 
-type Stack = [Frame]
+type Stack = [StackE]
+
+data StackE = SFrame Frame | SEnv VEnv
 
 data Frame = FIf Exp Exp
-           | FApp
-           | FLet
+           | FApp String
            | FFun
+           | FVar String
 
 data Flag = Evaluating | Returning
 
@@ -68,6 +72,7 @@ msGetValue :: MachineState -> Value
 msGetValue (MachineState [] (Num i) env Returning s) = I i
 msGetValue (MachineState [] (Con "True") env Returning s) = B True
 msGetValue (MachineState [] (Con "False") env Returning s) = B False
+msGetValue (MachineState [] (Con "Nil") env Returning s) = Nil
 msGetValue (MachineState [] (Var x) env Returning s) = error "implement me!"
 
 {-
@@ -87,38 +92,52 @@ data Exp
 msStep :: MachineState -> MachineState
 msStep (MachineState stack (Con x) env Evaluating s) = MachineState stack (Con x) env Returning s
 msStep (MachineState stack (Num i) env Evaluating s) = MachineState stack (Num i) env Returning s
-msStep (MachineState stack (Var x) env Evaluating s) = undefined
-msStep (MachineState stack (App e1 e2) env Evaluating s) = MachineState ((FApp) : stack) e1 (E.add env (s2, (E e2 Nil))) Evaluating s
+msStep (MachineState stack (Var x) env Evaluating s) = case E.lookup env x of Just (I i) -> MachineState stack (Num i) env Returning s
+                                                                              Just (B b) -> MachineState stack (Con (show b)) env Returning s
+                                                                              Just (F exp) -> MachineState stack exp env Returning s
+                                                                              Just Nil   -> MachineState stack (Con "Nil") env Returning s
+                                                                              Just (E exp Unevaluated) -> MachineState ((SFrame (FVar x) ) : stack) exp env Evaluating s
+                                                                              Just (E _ val) -> case val of (I i) -> MachineState stack (Num i) env Returning s
+                                                                                                            (B b) -> MachineState stack (Con (show b)) env Returning s
+msStep (MachineState stack (App e1 e2) env Evaluating s) = MachineState (SFrame (FApp s2) : stack) e1 (E.add env (s2, (E e2 Unevaluated))) Evaluating s
   where
     s2 = s ++ ".f"
-msStep (MachineState stack (If e1 e2 e3) env Evaluating s) = MachineState ((FIf e2 e3) : stack) e1 env Evaluating s
-msStep (MachineState stack (Let binds e) env Evaluating s) = MachineState ((FLet) : stack) e (addBinds env binds s) Evaluating s2
+msStep (MachineState stack (If e1 e2 e3) env Evaluating s) = MachineState (SFrame (FIf e2 e3) : stack) e1 env Evaluating s
+msStep (MachineState stack (Let binds e) env Evaluating s) = MachineState stack e (addBinds env binds s) Evaluating s
+msStep (MachineState stack (Recfun (Bind id t ids exp)) env Evaluating s) = MachineState ((SFrame FFun) :stack) exp (E.add env (id, F exp ) ) Evaluating s
+msStep (MachineState stack exp env Returning s) = MachineState newStack newExp newEnv newFlag s
   where
-    s2 = s
-msStep (MachineState stack (Recfun bind) env Evaluating s) = undefined
-msStep (MachineState stack exp env Returning s) = MachineState newStack newExp env newFlag s
-  where
-    (newStack, newExp, newFlag) = insertVal stack (expToVal env exp)
+    (newStack, newExp, newFlag, newEnv) = insertVal stack (expToVal env exp) env
 
+{-
+data Bind = Bind Id Type [Id] Exp
+  deriving (Read,Show,Eq)-}
 
 addBinds :: VEnv -> [Bind] -> String -> VEnv
-addBinds env binds string = undefined
+addBinds env [] string = env
+addBinds env ((Bind id t ids exp):bs) string = addBinds (E.add env (id, expToVal env exp)) bs string
+--addBinds env ((Bind id (Arrow t1 t2) ids exp):bs) string = addBinds (E.add env (id, F exp)) bs string
 
-insertVal :: Stack -> Value -> (Stack, Exp, Flag)
-insertVal (FApp : stack) (I i) = undefined
-insertVal (FLet : stack) (I i) = undefined
-insertVal (FFun : stack) (I i) = undefined
-insertVal (FApp : stack) (B b) = undefined
-insertVal (FLet : stack) (B b) = undefined
-insertVal (FFun : stack) (B b) = undefined
-insertVal ((FIf e1 e2) : stack) (B b) = case b of True -> (stack, e1, Evaluating)
-                                                  False -> (stack, e2, Evaluating)
-insertVal stack (B b) = undefined
+insertVal :: Stack -> Value -> VEnv -> (Stack, Exp, Flag, VEnv)
+insertVal ((SFrame (FApp s)) : stack) (I i) env = undefined
+insertVal ((SFrame (FApp s)) : stack) (B b) env = undefined
+insertVal ((SFrame FFun) : stack) (I i) env = undefined
+insertVal ((SFrame FFun) : stack) (B b) env = undefined
+insertVal ((SFrame (FIf e1 e2)) : stack) (B b) env = case b of True -> (stack, e1, Evaluating, env)
+                                                               False -> (stack, e2, Evaluating, env)
+insertVal ((SFrame (FVar x)) : stack) (B b) env = (stack, Con (show b), Returning, E.add env (x, expToVal env (Con (show b))))
+insertVal ((SFrame (FVar x)) : stack) (I i) env = (stack, Num i, Returning, E.add env (x, expToVal env (Num i)))
+insertVal stack (B b) env = undefined
 
+getExpFromStack :: Stack -> Exp
+getExpFromStack ((SFrame (FApp s)):stack) = undefined
+getExpFromStack ((SFrame (FIf e1 e2)) : stack) = undefined
+getExpFromStack ((SFrame FFun) : stack) = undefined 
 
 expToVal :: VEnv -> Exp -> Value
 expToVal env (Con s) = case s of "True" -> B True
                                  "False" -> B False
+                                 "Nil" -> (trace "nilout") $  Nil
                                  _ -> error "invalid constant"
 expToVal env (Var x) = case E.lookup env x of Just e -> e
                                               Nothing -> error "variable not in environment"

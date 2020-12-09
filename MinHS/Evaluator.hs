@@ -7,13 +7,11 @@ import Debug.Trace
 
 type VEnv = E.Env Value
 
-data Flag = Evaluating | Returning
-
 data Value = I Integer
            | B Bool
            | Nil
            | Cons Integer Value
-           | Func Exp
+           | E Exp Value
            -- Add other variants as needed
            deriving (Show, Read)
 
@@ -26,17 +24,16 @@ instance PP.Pretty Value where
 
 
 
-data MachineState = MachineState [Frame] Exp Flag VEnv -- add the definition
+data MachineState = MachineState Stack Exp VEnv Flag String -- add the definition
 
-data Frame = FApp Block Exp
-           | FIf Block Exp Exp
-           | FLet Block
-           | FValue
+type Stack = [Frame]
 
-data FBind = FBind Id Type [Id] Block
+data Frame = FIf Exp Exp
+           | FApp
+           | FLet
+           | FFun
 
-data Block = Block | BValue Value | BExp Exp
-
+data Flag = Evaluating | Returning
 
 -- do not change this definition
 evaluate :: Program -> Value
@@ -46,7 +43,7 @@ evaluate [Bind _ _ _ e] = evalE e
 evalE :: Exp -> Value
 evalE exp = loop (msInitialState exp)
   where 
-    loop ms = -- (trace "debug message") $  -- uncomment this line and pretty print the machine state/parts of it to
+    loop ms@(MachineState _ exp _ _ _) =  (trace (show exp)) $  -- uncomment this line and pretty print the machine state/parts of it to
                                             -- observe the machine states
              if (msInFinalState newMsState)
                 then msGetValue newMsState
@@ -55,45 +52,95 @@ evalE exp = loop (msInitialState exp)
                  newMsState = msStep ms
 
 msInitialState :: Exp -> MachineState
-msInitialState exp = MachineState [] exp Evaluating E.empty
+msInitialState exp = (trace (show exp)) $
+                      MachineState [] exp E.empty Evaluating ""
 
 -- checks whether machine is in final state
 msInFinalState :: MachineState -> Bool
-msInFinalState (MachineState [FValue] (Var s) Returning env) = True
-msInFinalState (MachineState [FValue] (Con s) Returning env) = True
-msInFinalState (MachineState [FValue] (Num x) Returning env) = True
-msInFinalState _                                             = False
+msInFinalState (MachineState [] (Num i) env Returning _) = True
+msInFinalState (MachineState [] (Con s) env Returning _) = True
+msInFinalState (MachineState [] (Var x) env Returning _) = error "implemt"
+msInFinalState _ = False
 
 
 -- returns the final value, if machine in final state, Nothing otherwise
 msGetValue :: MachineState -> Value
-msGetValue ms = case msInFinalState ms of True -> undefined
-                                          _    -> Nil
-  
+msGetValue (MachineState [] (Num i) env Returning s) = I i
+msGetValue (MachineState [] (Con "True") env Returning s) = B True
+msGetValue (MachineState [] (Con "False") env Returning s) = B False
+msGetValue (MachineState [] (Var x) env Returning s) = error "implement me!"
+
+{-
+data Exp
+    = Var Id
+    | Prim Op
+    | Con Id
+    | Num Integer
+    | App Exp Exp
+    | If Exp Exp Exp
+    | Let [Bind] Exp
+    | Recfun Bind
+    | Letrec [Bind] Exp
+    deriving (Read,Show,Eq)
+    -} 
+ 
 msStep :: MachineState -> MachineState
-msStep (MachineState stack exp Returning env) = error "implement me!"
-msStep (MachineState ((FIf Block e1 e2):xs) True Returning env) = undefined
-msStep (MachineState ((FIf Block e1 e2):xs) False Returning env) = undefined
-msStep (MachineState stack (Var s) Evaluating env) = undefined
-msStep (MachineState stack (Prim op) Evaluating env) = undefined
-msStep (MachineState stack (Con s) Evaluating env) = undefined
-msStep (MachineState stack (Num x) Evaluating env) = undefined
-msStep (MachineState stack (App e1 e2) Evaluating env) = (MachineState ((FApp Block Block):stack) e2 Evaluating env)
-msStep (MachineState stack (If e1 e2 e3) Evaluating env) = undefined
-msStep (MachineState stack (Let (b:bs) e) Evaluating env) = undefined
-msStep (MachineState stack (Recfun b) Evaluating env) = undefined
-msStep (MachineState stack (Letrec (b:bs) e) Evaluating env) = undefined
+msStep (MachineState stack (Con x) env Evaluating s) = MachineState stack (Con x) env Returning s
+msStep (MachineState stack (Num i) env Evaluating s) = MachineState stack (Num i) env Returning s
+msStep (MachineState stack (Var x) env Evaluating s) = undefined
+msStep (MachineState stack (App e1 e2) env Evaluating s) = MachineState ((FApp) : stack) e1 (E.add env (s2, (E e2 Nil))) Evaluating s
+  where
+    s2 = s ++ ".f"
+msStep (MachineState stack (If e1 e2 e3) env Evaluating s) = MachineState ((FIf e2 e3) : stack) e1 env Evaluating s
+msStep (MachineState stack (Let binds e) env Evaluating s) = MachineState ((FLet) : stack) e (addBinds env binds s) Evaluating s2
+  where
+    s2 = s
+msStep (MachineState stack (Recfun bind) env Evaluating s) = undefined
+msStep (MachineState stack exp env Returning s) = MachineState newStack newExp env newFlag s
+  where
+    (newStack, newExp, newFlag) = insertVal stack (expToVal env exp)
 
-insertValue :: Frame -> Value -> Frame
-insertValue (FApp Block block) = undefined
-insertValue (FApp block Block) = undefined
-insertValue (FIf Block block1 block2) = undefined
-insertValue (FIf (BValue (B bool)) block1 block2) = undefined
 
-insertValue (FLet Block) = undefined
+addBinds :: VEnv -> [Bind] -> String -> VEnv
+addBinds env binds string = undefined
 
-getNextExp :: [Frame] -> Exp
-getNextExp = undefined
+insertVal :: Stack -> Value -> (Stack, Exp, Flag)
+insertVal (FApp : stack) (I i) = undefined
+insertVal (FLet : stack) (I i) = undefined
+insertVal (FFun : stack) (I i) = undefined
+insertVal (FApp : stack) (B b) = undefined
+insertVal (FLet : stack) (B b) = undefined
+insertVal (FFun : stack) (B b) = undefined
+insertVal ((FIf e1 e2) : stack) (B b) = case b of True -> (stack, e1, Evaluating)
+                                                  False -> (stack, e2, Evaluating)
+insertVal stack (B b) = undefined
+
+
+expToVal :: VEnv -> Exp -> Value
+expToVal env (Con s) = case s of "True" -> B True
+                                 "False" -> B False
+                                 _ -> error "invalid constant"
+expToVal env (Var x) = case E.lookup env x of Just e -> e
+                                              Nothing -> error "variable not in environment"
+expToVal env (Num i) = I i
+expToVal _ _ = error "cannot cast exp to val"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

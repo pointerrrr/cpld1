@@ -35,7 +35,9 @@ data StackE = SFrame Frame | SEnv VEnv
               deriving (Show)
 
 data Frame = FIf Exp Exp
-           | FApp
+           | FApp Exp
+           | FOp1 Exp Op
+           | FOp2 Value Op
            | FVar String
            deriving (Show)
 
@@ -118,6 +120,9 @@ makeApp stack (Var f) varexp env = trace (show newExp) $ (stack, newExp, newEnv)
   where
     (newExp, newEnv) = case (E.lookup env f) of Just (F x@(Recfun (Bind fid ftype (farg:fargs) fexp))) -> (x, E.add env (farg, E varexp Unevaluated))
                                                 Nothing -> error "function not in env"
+makeApp stack (App (Prim op) e1) varexp env = ((( SFrame (FOp1 varexp op) ) : stack), e1, env)
+makeApp stack (Prim Add) varexp env = error "here fucker"
+makeApp stack e1 e2 env = error (show e1)
 
 addBinds :: VEnv -> [Bind] -> String -> VEnv
 addBinds env [] string = env
@@ -125,8 +130,12 @@ addBinds env ((Bind id t ids exp):bs) string = trace ((show exp) ++ " addBinds")
 --addBinds env ((Bind id (Arrow t1 t2) ids exp):bs) string = addBinds (E.add env (id, F exp)) bs string
 
 insertVal :: Stack -> Value -> VEnv -> (Stack, Exp, Flag, VEnv)
-insertVal ((SFrame (FApp)) : stack) (I i) env = undefined
-insertVal ((SFrame (FApp)) : stack) (B b) env = undefined
+insertVal ((SFrame (FApp e)) : stack) (I i) env = undefined
+insertVal ((SFrame (FApp e)) : stack) (B b) env = undefined
+insertVal ((SFrame (FOp1 e op)) : stack) val env = (((SFrame (FOp2 val op)) : stack), e, Evaluating, env)
+insertVal ((SFrame (FOp2 val1 op)) :stack) val2 env = (stack, newExp, Evaluating, env)
+  where
+    newExp = evalOp op val1 val2
 insertVal ((SFrame (FIf e1 e2)) : stack) (B b) env = case b of True -> (stack, e1, Evaluating, env)
                                                                False -> (stack, e2, Evaluating, env)
 insertVal ((SFrame (FVar x)) : stack) (B b) env = (stack, Con (show b), Returning, E.add env (x, B b))
@@ -135,7 +144,7 @@ insertVal ((SFrame (FVar x)) : stack) (F e) env = trace ((show e) ++ " insertVal
 insertVal stack (B b) env = undefined
 
 getExpFromStack :: Stack -> Exp
-getExpFromStack ((SFrame (FApp)):stack) = undefined
+getExpFromStack ((SFrame (FApp e)):stack) = undefined
 getExpFromStack ((SFrame (FIf e1 e2)) : stack) = undefined
 
 expToVal :: VEnv -> Exp -> Value
@@ -150,7 +159,19 @@ expToVal env (Recfun (Bind fname ftype fargs exp)) = trace ( (show exp) ++ " exp
 expToVal _ exp = trace (show exp) $ error "cannot cast exp to val"
 
 
-
+evalOp :: Op -> Value -> Value -> Exp
+evalOp Add (I i1) (I i2)  = Num (i1 + i2)
+evalOp Sub (I i1) (I i2)  = Num (i1 - i2)
+evalOp Mul (I i1) (I i2)  = Num (i1 * i2)
+evalOp Quot (I i1) (I i2)  = case i2 of 0 -> error "divide by zero"
+                                        _ -> Num (quot i1 i2)
+evalOp Rem (I i1) (I i2)  = Num (mod i1 i2)
+evalOp Gt (I i1) (I i2)  = Con (show (i1 > i2))
+evalOp Ge (I i1) (I i2)  = Con (show (i1 >= i2))
+evalOp Lt (I i1) (I i2)  = Con (show (i1 < i2))
+evalOp Le (I i1) (I i2)  = Con (show (i1 <= i2))
+evalOp Eq (I i1) (I i2)  = Con (show (i1 == i2))
+evalOp Ne (I i1) (I i2)  = Con (show (i1 /= i2))
 
 
 

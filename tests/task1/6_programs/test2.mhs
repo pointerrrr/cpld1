@@ -1,6 +1,6 @@
 main :: Bool
      =
     let f :: (Int -> Bool) =
-        recfun f :: (Int -> Bool) x = False;
+        recfun f :: (Int -> Bool) x = x < 20;
     in
         f 16;

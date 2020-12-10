@@ -38,6 +38,7 @@ data Frame = FIf Exp Exp
            | FApp Exp
            | FOp1 Exp Op
            | FOp2 Value Op
+           | FOp3 Op
            | FVar String
            deriving (Show)
 
@@ -52,7 +53,7 @@ evaluate [Bind _ _ _ e] = evalE e
 evalE :: Exp -> Value
 evalE exp = loop (msInitialState exp)
   where 
-    loop ms =  (trace (show ms)) $  -- uncomment this line and pretty print the machine state/parts of it to
+    loop ms =  --(trace (show ms)) $  -- uncomment this line and pretty print the machine state/parts of it to
                                             -- observe the machine states
              if (msInFinalState newMsState)
                 then msGetValue newMsState
@@ -121,8 +122,8 @@ makeApp stack (Var f) varexp env = trace (show newExp) $ (stack, newExp, newEnv)
     (newExp, newEnv) = case (E.lookup env f) of Just (F x@(Recfun (Bind fid ftype (farg:fargs) fexp))) -> (x, E.add env (farg, E varexp Unevaluated))
                                                 Nothing -> error "function not in env"
 makeApp stack (App (Prim op) e1) varexp env = ((( SFrame (FOp1 varexp op) ) : stack), e1, env)
-makeApp stack (Prim Add) varexp env = error "here fucker"
-makeApp stack e1 e2 env = error (show e1)
+makeApp stack (Prim Neg) varexp env = (((SFrame (FOp3 Neg) ) :stack), varexp, env)
+makeApp stack e1 e2 env = error ((show e1) ++ " makeApp")
 
 addBinds :: VEnv -> [Bind] -> String -> VEnv
 addBinds env [] string = env
@@ -136,6 +137,7 @@ insertVal ((SFrame (FOp1 e op)) : stack) val env = (((SFrame (FOp2 val op)) : st
 insertVal ((SFrame (FOp2 val1 op)) :stack) val2 env = (stack, newExp, Evaluating, env)
   where
     newExp = evalOp op val1 val2
+insertVal ((SFrame (FOp3 op)) : stack) (I i) env = (stack, Num (-i), Evaluating, env)
 insertVal ((SFrame (FIf e1 e2)) : stack) (B b) env = case b of True -> (stack, e1, Evaluating, env)
                                                                False -> (stack, e2, Evaluating, env)
 insertVal ((SFrame (FVar x)) : stack) (B b) env = (stack, Con (show b), Returning, E.add env (x, B b))
@@ -175,6 +177,11 @@ evalOp Ne (I i1) (I i2)  = Con (show (i1 /= i2))
 
 
 
+isBinOp :: Op -> Bool
+isBinOp Neg = False
+isBinOp Head = False
+isBinOp Tail = False
+isBinOp Null = False
 
 
 

@@ -1,6 +1,6 @@
-main :: Bool
+main :: Int
      =
-    let f :: (Int -> Bool) =
-        recfun f :: (Int -> Bool) x = x < 20;
+    let f :: (Int -> Int) =
+        recfun f :: (Int -> Int) x = -x;
     in
         f 16;

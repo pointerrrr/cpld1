@@ -40,6 +40,7 @@ data Frame = FIf Exp Exp
            | FOp2 Value Op
            | FOp3 Op
            | FVar String
+           | FList Value Exp
            deriving (Show)
 
 data Flag = Evaluating | Returning
@@ -123,6 +124,8 @@ makeApp stack (Var f) varexp env = trace (show newExp) $ (stack, newExp, newEnv)
                                                 Nothing -> error "function not in env"
 makeApp stack (App (Prim op) e1) varexp env = ((( SFrame (FOp1 varexp op) ) : stack), e1, env)
 makeApp stack (Prim Neg) varexp env = (((SFrame (FOp3 Neg) ) :stack), varexp, env)
+makeApp ((SFrame (FList v e)) : stack) (App (Con "Cons") e1) varexp env = ((SFrame (FList ()) : stack),
+makeApp stack (App (Con "Cons") e1) varexp env = (((SFrame (FList Nil varexp)) : stack), e1, env)
 makeApp stack e1 e2 env = error ((show e1) ++ " makeApp")
 
 addBinds :: VEnv -> [Bind] -> String -> VEnv
@@ -143,6 +146,7 @@ insertVal ((SFrame (FIf e1 e2)) : stack) (B b) env = case b of True -> (stack, e
 insertVal ((SFrame (FVar x)) : stack) (B b) env = (stack, Con (show b), Returning, E.add env (x, B b))
 insertVal ((SFrame (FVar x)) : stack) (I i) env = (stack, Num i, Returning, E.add env (x, I i))
 insertVal ((SFrame (FVar x)) : stack) (F e) env = trace ((show e) ++ " insertVal" ) $ (stack, e, Evaluating, E.add env (x, F e))
+insertVal ((SFrame (FList x)) : stack) (I i) env = (stack, x, Evaluating, env)
 insertVal stack (B b) env = undefined
 
 getExpFromStack :: Stack -> Exp

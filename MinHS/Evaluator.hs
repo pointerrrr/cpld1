@@ -11,9 +11,8 @@ data Value = I Integer
            | B Bool
            | Nil
            | Cons Integer Value
-           | E Exp Value
-           | F Exp
-           | Unevaluated
+           | E Exp
+           | O Op Value
            -- Add other variants as needed
            deriving (Show, Read)
 
@@ -26,13 +25,14 @@ instance PP.Pretty Value where
 
 
 
-data MachineState = MachineState Stack Exp VEnv Flag String -- add the definition
-                    deriving (Show)
+data MachineState = MachineState Stack State VEnv  -- add the definition
+                  deriving (Show)
 
-type Stack = [StackE]
+data State = Evaluating Exp
+           | Returning Value
+           deriving (Show)
 
-data StackE = SFrame Frame | SEnv VEnv
-              deriving (Show)
+type Stack = [Frame]
 
 data Frame = FIf Exp Exp
            | FApp Exp
@@ -41,10 +41,8 @@ data Frame = FIf Exp Exp
            | FOp3 Op
            | FVar String
            | FList Value Exp
+           | FClos VEnv
            deriving (Show)
-
-data Flag = Evaluating | Returning
-          deriving (Show)
 
 -- do not change this definition
 evaluate :: Program -> Value
@@ -52,9 +50,9 @@ evaluate [Bind _ _ _ e] = evalE e
 
 -- do not change this definition
 evalE :: Exp -> Value
-evalE exp = loop (msInitialState exp)
+evalE exp = trace (show exp) $ loop (msInitialState exp)
   where 
-    loop ms =  --(trace (show ms)) $  -- uncomment this line and pretty print the machine state/parts of it to
+    loop ms =  (trace (show ms)) $  -- uncomment this line and pretty print the machine state/parts of it to
                                             -- observe the machine states
              if (msInFinalState newMsState)
                 then msGetValue newMsState
@@ -63,156 +61,78 @@ evalE exp = loop (msInitialState exp)
                  newMsState = msStep ms
 
 msInitialState :: Exp -> MachineState
-msInitialState exp = (trace (show exp)) $
-                      MachineState [] exp E.empty Evaluating ""
+msInitialState exp = MachineState [] (Evaluating exp) E.empty
 
 -- checks whether machine is in final state
 msInFinalState :: MachineState -> Bool
-msInFinalState (MachineState [] (Num i) env Returning _) = True
-msInFinalState (MachineState [] (Con s) env Returning _) = True
-msInFinalState (MachineState [] (Var x) env Returning _) = error "implemt"
+msInFinalState (MachineState [] (Returning _) e) = True
 msInFinalState _ = False
 
 
 -- returns the final value, if machine in final state, Nothing otherwise
 msGetValue :: MachineState -> Value
-msGetValue (MachineState [] (Num i) env Returning s) = I i
-msGetValue (MachineState [] (Con "True") env Returning s) = B True
-msGetValue (MachineState [] (Con "False") env Returning s) = B False
-msGetValue (MachineState [] (Con "Nil") env Returning s) = Nil
-msGetValue (MachineState [] (Var x) env Returning s) = error "implement me!"
-
-{-
-data Exp
-    = Var Id
-    | Prim Op
-    | Con Id
-    | Num Integer
-    | App Exp Exp
-    | If Exp Exp Exp
-    | Let [Bind] Exp
-    | Recfun Bind
-    | Letrec [Bind] Exp
-    deriving (Read,Show,Eq)
-    -} 
- 
+msGetValue (MachineState [] (Returning val) env) = val
+  
 msStep :: MachineState -> MachineState
-msStep (MachineState stack (Con x) env Evaluating s) = MachineState stack (Con x) env Returning s
-msStep (MachineState stack (Num i) env Evaluating s) = MachineState stack (Num i) env Returning s
-msStep (MachineState stack (Var x) env Evaluating s) = case E.lookup env x of Just (I i) -> MachineState stack (Num i) env Returning s
-                                                                              Just (B b) -> MachineState stack (Con (show b)) env Returning s
-                                                                              Just (F exp) -> MachineState stack exp env Evaluating s
-                                                                              Just Nil   -> MachineState stack (Con "Nil") env Returning s
-                                                                              Just (E exp Unevaluated) -> MachineState ((SFrame (FVar x) ) : stack) exp env Evaluating s
-                                                                              Just (E _ val) -> case val of (I i) -> MachineState stack (Num i) env Returning s
-                                                                                                            (B b) -> MachineState stack (Con (show b)) env Returning s
-msStep (MachineState stack (App e1 e2) env Evaluating s) = trace ((show e1) ++ " msStep") MachineState newStack newExp newEnv Evaluating s
+msStep (MachineState stack (Evaluating exp) env) = evalExp stack exp env
+msStep (MachineState stack (Returning val) env) = insertVal stack val env
+
+evalExp :: Stack -> Exp -> VEnv -> MachineState
+evalExp stack (Con "True") env = MachineState stack (Returning (B True)) env
+evalExp stack (Con "False") env = MachineState stack (Returning (B False)) env
+evalExp stack (Con "Nil") env = MachineState stack (Returning Nil) env
+evalExp stack (Num i) env = MachineState stack (Returning (I i)) env
+evalExp stack (Var x) env = case E.lookup env x of Just (B b) -> MachineState stack (Returning (B b)) env
+                                                   Just (I i) -> MachineState stack (Returning (I i)) env
+                                                   Just (Cons i val) -> MachineState stack (Returning (Cons i val)) env
+                                                   Just Nil -> MachineState stack (Returning Nil) env
+                                                   Just (E e) -> MachineState ((FVar x) : stack) (Evaluating e) env
+                                                   Nothing -> error "variable not in env"
+evalExp stack (If e1 e2 e3) env = MachineState ((FIf e2 e3) : stack) (Evaluating e1) env
+evalExp stack (Let binds e1) env = MachineState ((FClos env) : stack) (Evaluating e1) (addBinds env binds)
+evalExp stack (App e1 e2) env = makeApp stack (App e1 e2) env
+evalExp stack (Recfun (Bind id t ids exp)) env = MachineState stack (Evaluating exp) (E.add env (id, E exp))
+--msStep (MachineState stack (Recfun (Bind id t ids exp)) env Evaluating s) = MachineState stack exp (E.add env (id, F exp ) ) Evaluating s
+
+insertVal :: Stack -> Value -> VEnv -> MachineState
+insertVal ((FIf e1 e2) : stack) val env = case val of B True -> MachineState stack (Evaluating e1) env
+                                                      _ -> MachineState stack (Evaluating e2) env
+insertVal ((FVar x) : stack) val env = MachineState stack (Returning val) (E.add env (x, val))
+insertVal ((FOp1 e op) : stack) val env = MachineState ((FOp2 val op) : stack) (Evaluating e) env
+insertVal ((FOp2 val1 op) : stack) val2 env = MachineState stack (Returning (doOp op val1 val2)) env
+insertVal ((FOp3 Neg) : stack) (I i) env = MachineState stack (Returning (I (-i))) env
+insertVal ((FClos env) : stack) val _ = MachineState stack (Returning val) env
+
+
+
+
+makeApp :: Stack -> Exp -> VEnv -> MachineState
+makeApp stack (App (App (Prim op) e1) e2) env = MachineState ((FOp1 e1 op) : stack) (Evaluating e2) env
+makeApp stack (App (Prim Neg) e) env = MachineState ((FOp3 Neg) : stack) (Evaluating e) env
+makeApp stack (App e1 e2) env = MachineState ((FApp e2) : stack) (Evaluating e1) env
+makeApp stack (App (Var x) e) env = MachineState ((FClos env) : stack) (Evaluating func) newEnv
   where
-    (newStack, newExp, newEnv) = makeApp stack e1 e2 env
-msStep (MachineState stack (If e1 e2 e3) env Evaluating s) = MachineState (SFrame (FIf e2 e3) : stack) e1 env Evaluating s
-msStep (MachineState stack (Let binds e) env Evaluating s) = MachineState stack e (addBinds env binds s) Evaluating s
-msStep (MachineState stack (Recfun (Bind id t ids exp)) env Evaluating s) = MachineState stack exp (E.add env (id, F exp ) ) Evaluating s
-msStep (MachineState stack exp env Returning s) = MachineState newStack newExp newEnv newFlag s
-  where
-    (newStack, newExp, newFlag, newEnv) = insertVal stack (expToVal env exp) env
+    (func, newEnv) = case E.lookup env x of Just (E x@(Recfun (Bind fid ftype (farg:fargs) fexp))) -> (x, E.add env (farg, E e))
+                                            Nothing -> error "function not in env "
+    
 
 
-makeApp :: Stack -> Exp -> Exp -> VEnv -> (Stack, Exp, VEnv)
-makeApp stack (Var f) varexp env = trace (show newExp) $ (stack, newExp, newEnv)
-  where
-    (newExp, newEnv) = case (E.lookup env f) of Just (F x@(Recfun (Bind fid ftype (farg:fargs) fexp))) -> (x, E.add env (farg, E varexp Unevaluated))
-                                                Nothing -> error "function not in env"
-makeApp stack (App (Prim op) e1) varexp env = ((( SFrame (FOp1 varexp op) ) : stack), e1, env)
-makeApp stack (Prim Neg) varexp env = (((SFrame (FOp3 Neg) ) :stack), varexp, env)
-makeApp ((SFrame (FList v e)) : stack) (App (Con "Cons") e1) varexp env = ((SFrame (FList ()) : stack),
-makeApp stack (App (Con "Cons") e1) varexp env = (((SFrame (FList Nil varexp)) : stack), e1, env)
-makeApp stack e1 e2 env = error ((show e1) ++ " makeApp")
+addBinds :: VEnv -> [Bind] -> VEnv
+addBinds env [] = env
+addBinds env ((Bind bid btype bargs e) : binds) = addBinds (E.add env (bid, E e)) binds
+addBinds env ((Bind bid btype bargs e) : binds) = addBinds (E.add env (bid, E e)) binds
 
-addBinds :: VEnv -> [Bind] -> String -> VEnv
-addBinds env [] string = env
-addBinds env ((Bind id t ids exp):bs) string = trace ((show exp) ++ " addBinds") $  addBinds (E.add env (id, expToVal env exp)) bs string
---addBinds env ((Bind id (Arrow t1 t2) ids exp):bs) string = addBinds (E.add env (id, F exp)) bs string
-
-insertVal :: Stack -> Value -> VEnv -> (Stack, Exp, Flag, VEnv)
-insertVal ((SFrame (FApp e)) : stack) (I i) env = undefined
-insertVal ((SFrame (FApp e)) : stack) (B b) env = undefined
-insertVal ((SFrame (FOp1 e op)) : stack) val env = (((SFrame (FOp2 val op)) : stack), e, Evaluating, env)
-insertVal ((SFrame (FOp2 val1 op)) :stack) val2 env = (stack, newExp, Evaluating, env)
-  where
-    newExp = evalOp op val1 val2
-insertVal ((SFrame (FOp3 op)) : stack) (I i) env = (stack, Num (-i), Evaluating, env)
-insertVal ((SFrame (FIf e1 e2)) : stack) (B b) env = case b of True -> (stack, e1, Evaluating, env)
-                                                               False -> (stack, e2, Evaluating, env)
-insertVal ((SFrame (FVar x)) : stack) (B b) env = (stack, Con (show b), Returning, E.add env (x, B b))
-insertVal ((SFrame (FVar x)) : stack) (I i) env = (stack, Num i, Returning, E.add env (x, I i))
-insertVal ((SFrame (FVar x)) : stack) (F e) env = trace ((show e) ++ " insertVal" ) $ (stack, e, Evaluating, E.add env (x, F e))
-insertVal ((SFrame (FList x)) : stack) (I i) env = (stack, x, Evaluating, env)
-insertVal stack (B b) env = undefined
-
-getExpFromStack :: Stack -> Exp
-getExpFromStack ((SFrame (FApp e)):stack) = undefined
-getExpFromStack ((SFrame (FIf e1 e2)) : stack) = undefined
-
-expToVal :: VEnv -> Exp -> Value
-expToVal env (Con s) = case s of "True" -> B True
-                                 "False" -> B False
-                                 "Nil" -> (trace "nilout") $  Nil
-                                 _ -> error "invalid constant"
-expToVal env (Var x) = case E.lookup env x of Just e -> e
-                                              Nothing -> error "variable not in environment"
-expToVal env (Num i) = I i
-expToVal env (Recfun (Bind fname ftype fargs exp)) = trace ( (show exp) ++ " expToVal" ) $ F (Recfun (Bind fname ftype fargs exp))
-expToVal _ exp = trace (show exp) $ error "cannot cast exp to val"
-
-
-evalOp :: Op -> Value -> Value -> Exp
-evalOp Add (I i1) (I i2)  = Num (i1 + i2)
-evalOp Sub (I i1) (I i2)  = Num (i1 - i2)
-evalOp Mul (I i1) (I i2)  = Num (i1 * i2)
-evalOp Quot (I i1) (I i2)  = case i2 of 0 -> error "divide by zero"
-                                        _ -> Num (quot i1 i2)
-evalOp Rem (I i1) (I i2)  = Num (mod i1 i2)
-evalOp Gt (I i1) (I i2)  = Con (show (i1 > i2))
-evalOp Ge (I i1) (I i2)  = Con (show (i1 >= i2))
-evalOp Lt (I i1) (I i2)  = Con (show (i1 < i2))
-evalOp Le (I i1) (I i2)  = Con (show (i1 <= i2))
-evalOp Eq (I i1) (I i2)  = Con (show (i1 == i2))
-evalOp Ne (I i1) (I i2)  = Con (show (i1 /= i2))
-
-
-
-isBinOp :: Op -> Bool
-isBinOp Neg = False
-isBinOp Head = False
-isBinOp Tail = False
-isBinOp Null = False
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+doOp :: Op -> Value -> Value -> Value
+doOp Add (I i1) (I i2) = I (i1 + i2)
+doOp Sub (I i1) (I i2) = I (i1 - i2)
+doOp Mul (I i1) (I i2) = I (i1 * i2)
+doOp Quot (I i1) (I i2) = I (quot i1 i2)
+doOp Rem (I i1) (I i2) = I (mod i1 i2)
+doOp Gt (I i1) (I i2) = B (i1 > i2)
+doOp Ge (I i1) (I i2) = B (i1 >= i2)
+doOp Lt (I i1) (I i2) = B (i1 < i2)
+doOp Le (I i1) (I i2) = B (i1 <= i2)
+doOp Eq (I i1) (I i2) = B (i1 == i2)
+doOp Ne (I i1) (I i2) = B (i1 /= i2)
 
 

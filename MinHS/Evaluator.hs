@@ -59,7 +59,7 @@ evalE :: Exp -> Value
 evalE exp = trace (show exp) $ loop (msInitialState exp) 10000000
   where 
     loop ms@(MachineState stack state env) i =  --(trace ( ( case stack of [] -> ""
-                                                  --                       (x:xs) -> show (head stack)) ++ " " ++ show state ++ " " ++ show env)) $  -- uncomment this line and pretty print the machine state/parts of it to observe the machine states
+                                                                         --(x:xs) -> show (head stack)) ++ " " ++ show state ++ " " ++ show env)) $  -- uncomment this line and pretty print the machine state/parts of it to observe the machine states
              if (msInFinalState newMsState) || (i < 0)
                 then msGetValue newMsState
                 else loop newMsState (i - 1)
@@ -116,6 +116,7 @@ insertVal ((FOp3 Tail) : stack) val env = case val of Cons _ x -> MachineState s
                                                       y -> error "tail on empty list"
 insertVal ((FOp3 Null) : stack) val env = case val of Nil -> MachineState stack (Returning (B True)) env
                                                       _ -> MachineState stack (Returning (B False)) env-}
+--insertVal ((FClos env) : stack) (E e) env2 = MachineState ((FClos env) : stack) (Evaluating e) env2
 insertVal ((FClos env) : stack) val _ = MachineState stack (Returning val) env
 --insertVal ((FList val (App e1 e2)) : stack) (I i) env = MachineState ((FList (addAtEndOfList val (I i)) e2) : stack) (Evaluating e1) env
 --insertVal ((FList val (Con "Nil")) : stack) (I i) env = MachineState ((FCons (addAtEndOfList val (I i))) : stack) (Evaluating (Con "Nil")) env
@@ -157,7 +158,7 @@ addAtEndOfList (Cons i val1) val2 = Cons i (addAtEndOfList val1 val2)
 
 makeApp :: Stack -> Exp -> VEnv -> MachineState
 --makeApp stack (App (App (Con "Cons") e1) e2) env = MachineState ((FCons (E e2)):stack) (Evaluating (App (Con "Cons") e1)) env
-makeApp stack (App (App e1 e2) e3) env = MachineState ((FApp e3) : stack) (Evaluating (App e1 e2)) env
+makeApp stack (App (App e1 e2) e3) env = MachineState ((FApp e3) : (FClos env) : stack) (Evaluating (App e1 e2)) env
 makeApp stack (App (Prim op) e) env = MachineState ((FOp op) : stack) (Evaluating e) env
 makeApp stack (App (Con "Cons") e) env = MachineState (FHead : stack) (Returning (E e)) env
 makeApp stack (App (Var x) e) env = MachineState stack (Evaluating (App newExp e)) newEnv
@@ -167,10 +168,12 @@ makeApp stack (App (Var x) e) env = MachineState stack (Evaluating (App newExp e
                                                                                                                                   --Nothing -> (fexp, E.add env (farg, E e))
                                               Just (E exp) -> (exp, env)
                                               Nothing -> error $ "var " ++ x ++ " not in env " ++ (show env)
-makeApp stack (App (Recfun (Bind fid ftype [] e1)) e2) env = MachineState ((FClos env): stack) (Evaluating (App e1 e2)) env
-makeApp stack (App f@(Recfun (Bind fid (Arrow t1 (Arrow t2 t3)) (farg:fargs) e1)) e2) env = MachineState ((FClos env) : stack) (Returning (E e1)) newEnv --  error ":)" {- MachineState stack (Evaluating e1) newEnv --error $ show t1 ++ " " ++ show t2 ++ " " ++ show t3
+makeApp stack (App (Recfun (Bind fid ftype [] e1)) e2) env = MachineState stack (Evaluating (App e1 e2)) env
+makeApp stack (App f@(Recfun (Bind fid (Arrow t1 (Arrow t2 t3)) (farg:fargs) e1)) e2) env = MachineState stack (Returning (E e1)) newEnv --  error ":)" {- MachineState stack (Evaluating e1) newEnv --error $ show t1 ++ " " ++ show t2 ++ " " ++ show t3
   where
-    newEnv = E.add (E.add env (farg, E e2)) (fid, E f)
+    newEnv = case E.lookup env fid of Nothing -> E.add (E.add env (farg, E e2)) (fid, E f)
+                                      Just x -> case E.lookup env farg of Nothing -> E.add env (farg, E e2)
+                                                                          Just z -> E.add env (farg, R e2 z)
 makeApp stack (App (Recfun (Bind fid ftype (farg:fargs) e1)) e2) env = MachineState ((FClos env) : stack) (Evaluating e1) newEnv
   where
     newEnv = case E.lookup env fid of Nothing -> E.add (E.add env (fid, E (Recfun (Bind fid ftype (farg:fargs) e1)))) (farg, E e2)
